@@ -1,0 +1,392 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{textcomp} % for \textdegree
+\usepackage{amsmath, amssymb}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{microtype} % improves line breaking
+
+% listings setup
+\lstset{
+	language=Python,
+	basicstyle=\ttfamily\small,
+	keywordstyle=\color{blue},
+	commentstyle=\color{green!50!black},
+	stringstyle=\color{red},
+	numbers=left,
+	numberstyle=\tiny,
+	breaklines=true,
+	frame=single,
+	showstringspaces=false,
+	literate={°}{{\textdegree}}1 % replace ° with \textdegree in listings
+}
+
+\title{David Weather Predictor \\ Execution Guide}
+\author{David H. Haindongo}
+\date{\today}
+
+\begin{document}
+	\maketitle
+	
+
+	\newpage
+	\tableofcontents
+	
+	\newpage
+	
+	\section{System Overview}
+	The David Weather Predictor is a machine learning pipeline that ingests historical and real‑time weather data, engineers a rich set of features, detects atmospheric regimes, and trains a stacked ensemble of eight diverse models. The ensemble is calibrated, optimised for the F2 score (a metric that weights recall twice as much as precision), and provides prediction intervals via conformal prediction. A trust assessment module helps users interpret the reliability of each forecast.
+	
+	\subsection{High‑Level Architecture}
+	The main components and data flow are:
+	
+	\begin{verbatim}
+		Data Ingestion
+		|
+		v
+		Feature Engineering
+		|
+		v
+		Hidden Markov Model (HMM) Regime Detection
+		|
+		v
+		Target Creation
+		|
+		v
+		Training Pipeline
+		|
+		v
+		Prediction
+		|
+		v
+		Trust Assessment
+	\end{verbatim}
+	
+	\section{Execution Pipeline – Step by Step}
+	
+	\subsection{Step 1: Data Ingestion}
+	\textbf{Purpose:} Acquire live and historical weather data from the Open‑Meteo Application Programming Interface (API), handle missing values, and compute a data quality score.
+	
+	\textbf{Why Important:} Reliable forecasts depend on clean, complete data. Missing values are common in real‑world datasets; proper handling prevents bias and information loss.
+	
+	\textbf{Process:}
+	\begin{enumerate}
+		\item Fetch up to 92 days of hourly data (Open‑Meteo free tier limit).
+		\item If API fails, generate 1 year of synthetic data with realistic seasonal and diurnal cycles.
+		\item Apply time‑based linear interpolation for short gaps.
+		\item Use K‑Nearest Neighbours (KNN) imputation for remaining missing values ($k=5$, distance‑weighted).
+		\item Fill any remaining gaps with column median.
+		\item Compute data quality = 1 – (missing cells / total cells).
+	\end{enumerate}
+	
+	\textbf{Key Functions:} \texttt{fetch\_from\_openmeteo()}, \texttt{handle\_missing\_data()}, \texttt{\_create\_enhanced\_synthetic\_data()}.
+	
+	\textbf{Example:} Input: DataFrame with 25.7\% missing cells. Output: Fully imputed DataFrame, data quality = 100\%.
+	
+	\subsection{Step 2: Feature Engineering}
+	\textbf{Purpose:} Transform raw meteorological variables into a rich set of predictors that capture temporal patterns, interactions, and cyclic behaviours.
+	
+	\textbf{Why Important:} Raw variables alone (temperature, humidity, pressure) are insufficient for accurate rainfall prediction. Engineered features expose lag effects, trends, volatility, and periodicities that models can leverage.
+	
+	Below is a detailed explanation of each generated feature type, including its definition, purpose, and a concrete example.
+	
+	\subsubsection{Lags}
+	\textbf{Definition:} A lagged variable is the value of a meteorological variable (e.g., temperature) from a previous time step. For a given time $t$, the lag $h$ is the value at time $t-h$.
+	
+	\textbf{Purpose:} Lags capture the recent history of the atmosphere. Weather systems often persist, so past values are strong predictors of future conditions.
+	
+	\textbf{Example:} If temperature at 10:00 is 20°C, then the 3‑hour lag at 13:00 is 20°C. The feature \texttt{temperature\_lag\_3h} at 13:00 would be 20.
+	
+	\subsubsection{Rolling Statistics}
+	\textbf{Definition:} Rolling statistics are summary measures computed over a moving window of fixed length. We compute:
+	\begin{itemize}
+		\item \textbf{Mean:} average over the window
+		\item \textbf{Standard deviation:} measure of variability
+		\item \textbf{Minimum:} smallest value
+		\item \textbf{Maximum:} largest value
+		\item \textbf{Skewness:} asymmetry of the distribution
+		\item \textbf{Kurtosis:} “tailedness” of the distribution
+	\end{itemize}
+	\textbf{Purpose:} These features summarise the local behaviour of a variable. For example, the rolling mean smooths short‑term fluctuations, while the rolling standard deviation captures volatility (e.g., approaching storms often increase pressure variability).
+	
+	\textbf{Example:} Over a 6‑hour window, pressure readings are [1013, 1015, 1014, 1013, 1012, 1010]. Then:
+	\begin{align*}
+		\text{mean} &= \frac{1013+1015+1014+1013+1012+1010}{6} = 1012.83\\
+		\text{std} &\approx 1.72\\
+		\text{min} &= 1010\\
+		\text{max} &= 1015
+	\end{align*}
+	
+	\subsubsection{Rate of Change and Acceleration}
+	\textbf{Definition:}
+	\begin{itemize}
+		\item \textbf{First difference} (rate of change): $\Delta_h v(t) = v(t) - v(t-h)$.
+		\item \textbf{Second difference} (acceleration): $\Delta_h^2 v(t) = \Delta_h(\Delta_h v(t)) = v(t) - 2v(t-h) + v(t-2h)$.
+	\end{itemize}
+	\textbf{Purpose:} Rate of change tells how quickly a variable is increasing or decreasing (e.g., pressure drop indicates a storm). Acceleration tells whether that change is speeding up or slowing down.
+	
+	\textbf{Example:} Pressure at $t=0$: 1013, $t=6$: 1015, $t=12$: 1010.
+	\[
+	\Delta_6 v(6) = 1015-1013 = 2,\quad
+	\Delta_6^2 v(12) = 1010 - 2\cdot1015 + 1013 = -7.
+	\]
+	A positive rate of change means pressure is rising; a negative acceleration means the rise is slowing down.
+	
+	\subsubsection{Rain Accumulation}
+	\textbf{Definition:} For a given window length, we compute:
+	\begin{itemize}
+		\item \textbf{Sum:} total precipitation over the window.
+		\item \textbf{Maximum:} highest hourly precipitation.
+		\item \textbf{Standard deviation:} variability of precipitation.
+	\end{itemize}
+	\textbf{Purpose:} These features capture recent wetness, which is a direct precursor to future rain.
+	
+	\textbf{Example:} Over a 6‑hour window, precipitation (mm) = [0.0, 0.2, 0.5, 0.3, 0.0, 0.0]. Then:
+	\begin{align*}
+		\text{sum} &= 1.0\ \text{mm},\\
+		\text{max} &= 0.5\ \text{mm},\\
+		\text{std} &\approx 0.22.
+	\end{align*}
+	
+	\subsubsection{Interaction Terms}
+	\textbf{Definition:} Products of two variables, often scaled to avoid numerical issues. We use:
+	\begin{itemize}
+		\item \texttt{temp\_humidity} = (temperature × humidity) / 100.
+		\item \texttt{pressure\_humidity} = (pressure × humidity) / 1000.
+	\end{itemize}
+	\textbf{Purpose:} Interactions capture combined effects. For example, high humidity alone may not cause rain, but high humidity combined with low pressure is a stronger signal.
+	
+	\textbf{Example:} If temperature = 20°C, humidity = 80\%, then
+	\[
+	\text{temp\_humidity} = \frac{20\times80}{100} = 16.
+	\]
+	
+	\subsubsection{Fast Fourier Transform (FFT) Spectral Features}
+	\textbf{Definition:} The Fast Fourier Transform decomposes a time series into its frequency components. For a 168‑hour (1 week) window, we extract:
+	\begin{itemize}
+		\item \textbf{Top 5 dominant frequencies:} the frequencies with the largest amplitudes.
+		\item \textbf{Total spectral energy:} sum of squared amplitudes.
+	\end{itemize}
+	\textbf{Purpose:} These features capture periodic patterns, such as diurnal cycles (24h), synoptic waves (3‑7 days), or longer oscillations.
+	
+	\textbf{Example:} A pressure series might show a dominant frequency of 0.0417 cycles/hour (24‑hour period) and a total energy of 450.
+	
+	\subsubsection{Rolling Correlations}
+	\textbf{Definition:} Pearson correlation coefficient between two variables over a rolling 72‑hour window:
+	\[
+	\rho_{xy}(t) = \frac{\sum_{i=t-71}^{t} (x_i-\bar{x})(y_i-\bar{y})}{\sqrt{\sum (x_i-\bar{x})^2\sum (y_i-\bar{y})^2}}.
+	\]
+	We compute correlations for (pressure, temperature), (pressure, humidity), and (temperature, humidity).
+	
+	\textbf{Purpose:} Relationships between variables can change with weather regimes. For example, during a storm, pressure and humidity might become strongly anti‑correlated.
+	
+	\textbf{Example:} If pressure and temperature have been rising together over the last 72 hours, the correlation will be close to +1.
+	
+	\subsubsection{Cyclical Time Features}
+	\textbf{Definition:} We encode time using both linear and trigonometric transformations:
+	\begin{itemize}
+		\item \texttt{hour}, \texttt{day\_of\_year}, \texttt{month} – linear representations.
+		\item Sine/cosine transforms: \texttt{hour\_sin}, \texttt{hour\_cos} (daily cycle), \texttt{doy\_sin}, \texttt{doy\_cos} (annual cycle), \texttt{week\_sin}, \texttt{week\_cos} (weekly cycle).
+	\end{itemize}
+	\textbf{Purpose:} Cyclical features allow models to learn periodic patterns without assuming that hour 23 is close to hour 0. The sine/cosine pair preserves the circular nature of time.
+	
+	\textbf{Example:} For hour = 0, \texttt{hour\_sin}=0, \texttt{hour\_cos}=1. For hour = 6, \texttt{hour\_sin}=1, \texttt{hour\_cos}=0.
+	
+	\subsubsection{Principal Component Analysis (PCA)}
+	\textbf{Definition:} Principal Component Analysis is a dimensionality reduction technique that transforms a set of possibly correlated variables into a smaller number of uncorrelated variables called principal components. The first principal component captures the direction of maximum variance, the second the next largest variance orthogonal to the first, and so on.
+	
+	\textbf{Purpose:} PCA summarises the information from hundreds of features into a handful of components, reducing noise and multicollinearity. These components often represent “latent” weather patterns.
+	
+	\textbf{Example:} From 200 numeric features, the first principal component might be a linear combination like $0.3\cdot\text{pressure} + 0.4\cdot\text{temperature} - 0.2\cdot\text{humidity} + \cdots$, and its value for a given hour could be 3.2 (unitless). We add the first five such components as features.
+	
+	\subsection{Step 3: Hidden Markov Model (HMM) Regime Detection}
+	\textbf{Purpose:} Identify hidden atmospheric states (regimes) using a 3‑state Gaussian Hidden Markov Model on standardised pressure, temperature, and humidity.
+	
+	\textbf{Why Important:} Weather often exhibits distinct regimes (e.g., stable, transition, stormy). Knowing the current regime provides contextual information that can improve predictions.
+	
+	\textbf{Process:}
+	\begin{enumerate}
+		\item Standardise the three variables.
+		\item Fit a 3‑state Gaussian HMM (diagonal covariance).
+		\item Compute posterior probabilities of each state at every time step.
+		\item Add these probabilities as features \texttt{regime\_0}, \texttt{regime\_1}, \texttt{regime\_2}, and also \texttt{volatile\_prob} (probability of the state with highest variance).
+	\end{enumerate}
+	
+	\textbf{Key Functions:} \texttt{apply\_hmm()}.
+	
+	\textbf{Example:} Output for the latest hour: \texttt{regime\_0}=0.98, \texttt{regime\_1}=0.02, \texttt{regime\_2}=0.00, \texttt{volatile\_prob}=0.00 (meaning stable regime).
+	
+	\subsection{Step 4: Target Creation}
+	\textbf{Purpose:} Define the binary prediction target: whether total precipitation over the next $H$ hours exceeds 0.2 millimetres (mm).
+	
+	\textbf{Why Important:} This transforms the forecasting problem into a supervised classification task.
+	
+	\textbf{Equation:}
+	\[
+	y_t = \mathbf{1}\!\left(\sum_{i=1}^{H} \text{precip}_{t+i} > 0.2\right)
+	\]
+	\textbf{Example:} For $H=4$, if the sum of precipitation in the next 4 hours is 0.5 mm, $y_t=1$ (rain).
+	
+	\textbf{Key Functions:} \texttt{create\_target\_variable()}.
+	
+	\subsection{Step 5: Training the Stacked Ensemble}
+	This is the most complex stage, involving multiple sub‑steps.
+	
+	\subsubsection{5.1 Data Splitting}
+	The data is split chronologically into:
+	\begin{itemize}
+		\item Training: first 60\% (used for model training after SMOTE)
+		\item Validation: next 20\% (used for calibration, threshold optimisation, conformal quantile)
+		\item Test: last 20\% (held out for final performance evaluation)
+	\end{itemize}
+	
+	\subsubsection{5.2 Feature Selection}
+	Mutual information between each feature and the target is computed on the training set. The top 50–150 features (30\% of total, capped) are retained. This reduces dimensionality and noise.
+	
+	\subsubsection{5.3 Scaling}
+	All features are scaled using \texttt{RobustScaler} (median and interquartile range) to make them robust to outliers.
+	
+	\subsubsection{5.4 Synthetic Minority Over‑sampling Technique (SMOTE)}
+	Because rain events are often rare (class imbalance), SMOTE generates synthetic samples of the minority class (rain) by interpolating between existing minority instances. This balances the training set to 50\% rain, 50\% no rain.
+	
+	\textbf{Equation:}
+	\[
+	\mathbf{x}_{\text{new}} = \mathbf{x}_i + \lambda(\mathbf{x}_j - \mathbf{x}_i),\quad \lambda\in[0,1]
+	\]
+	
+	\subsubsection{5.5 Hyperparameter Tuning for Each Base Model}
+	Eight base models are used:
+	\begin{enumerate}
+		\item Random Forest (RF)
+		\item Extreme Gradient Boosting (XGBoost)
+		\item Light Gradient Boosting Machine (LightGBM)
+		\item Logistic Regression (LR)
+		\item Support Vector Machine (SVM, with Radial Basis Function kernel, probability=True)
+		\item Gradient Boosting Trees (GBT, from scikit‑learn)
+		\item Extra Trees (ET)
+		\item Multi‑layer Perceptron (MLP)
+	\end{enumerate}
+	For each, a randomized search over a predefined hyperparameter grid is performed using 3‑fold time‑series cross‑validation on the SMOTE‑balanced training set. The scoring metric is \textbf{F2 score} (defined below), which weights recall twice as much as precision – important because missing rain is costlier than a false alarm.
+	
+	\textbf{F2 score:}
+	\[
+	F_2 = 5\frac{P\cdot R}{4P + R},\quad P=\frac{TP}{TP+FP},\; R=\frac{TP}{TP+FN}
+	\]
+	where $TP$ = True Positives, $FP$ = False Positives, $FN$ = False Negatives.
+	
+	\subsubsection{5.6 Calibration with Platt Scaling}
+	Raw probabilities from each tuned model are often poorly calibrated. A logistic regression (Platt scaling) is fitted on the validation set to map raw probabilities to well‑calibrated ones.
+	
+	\textbf{Equation:}
+	\[
+	p_{\text{cal}} = \frac{1}{1+e^{-(a\,p_{\text{raw}}+b)}}
+	\]
+	where $a,b$ are learned.
+	
+	\subsubsection{5.7 Per‑Model Optimal Thresholds}
+	For each calibrated model, the threshold on the validation set that maximises the F2 score is stored. This threshold is later used to convert probabilities into binary predictions when displaying individual model outputs.
+	
+	\subsubsection{5.8 Meta‑Features and Meta‑Learner}
+	The calibrated validation probabilities from all eight models are stacked into a matrix (meta‑features). A Random Forest meta‑learner is trained on these meta‑features and the true validation labels. This ensemble learns to combine the base models' outputs optimally.
+	
+	\subsubsection{5.9 Final Evaluation on Test Set}
+	The entire pipeline (base models, calibrators, meta‑learner) is applied to the test set. Performance metrics (accuracy, precision, recall, F1, F2, Area Under the Curve (AUC), confusion matrix) are computed for each base model and the final ensemble. The optimal ensemble threshold (also found on validation) is used for binary decisions.
+	
+	\subsubsection{5.10 Conformal Quantile}
+	The absolute errors $|p_{\text{ens}} - y|$ on the validation set are computed. The 80th percentile $q$ is stored as the conformal quantile. For a new prediction, the 80\% prediction interval is $[p_{\text{ens}}-q,\;p_{\text{ens}}+q]$ (clipped to $[0,1]$). This provides an uncertainty estimate.
+	
+	\subsection{Step 6: Generating a Prediction for the Latest Time Step}
+	Given the current weather (the last row of the data), the pipeline produces:
+	\begin{itemize}
+		\item Calibrated probabilities from each base model.
+		\item Meta‑features (these probabilities) fed into the meta‑learner to obtain the ensemble probability $p_{\text{ens}}$.
+		\item Conformal interval: $[p_{\text{ens}}-q,\;p_{\text{ens}}+q]$.
+		\item Final outcome: \texttt{RAIN} if $p_{\text{ens}} \ge$ ensemble threshold, else \texttt{CLEAR}.
+		\item Confidence level based on interval width.
+	\end{itemize}
+	
+	\subsection{Step 7: Trust Assessment}
+	A trust score is computed using a weighted combination of:
+	\begin{itemize}
+		\item Data quality (0–3)
+		\item Interval width (0–2)
+		\item Model agreement (range of base model probabilities) (0–2)
+		\item Confidence label (0–1)
+		\item Low probability bonus (1 if clear and $p_{\text{ens}}<0.2$)
+		\item Volatility penalty (subtract 0.5 if high)
+	\end{itemize}
+	The total is converted to a percentage of the maximum possible, and a trust level (HIGH, MODERATE, LOW, VERY LOW) is assigned.
+	
+	\textbf{Example:} For a 2‑hour forecast with data quality=100\%, interval width=5\%, model agreement range=4.1\%, confidence=VERY HIGH, low probability bonus, no volatility, trust score=100\% (HIGH).
+	
+	\section{Key Definitions and Terms}
+	\begin{description}
+		\item[SMOTE] Synthetic Minority Over‑sampling Technique: creates synthetic samples of the minority class by interpolating between existing ones.
+		\item[F2 Score] A metric that weights recall twice as much as precision: $F_2 = 5\frac{P\cdot R}{4P+R}$, where $P$ is precision and $R$ is recall.
+		\item[Platt Scaling] A calibration method that fits a logistic regression to map raw probabilities to calibrated ones.
+		\item[Conformal Prediction] A method to produce prediction intervals with guaranteed coverage (here 80\%) by using the quantile of absolute errors on a validation set.
+		\item[Meta‑Learner] A model (here Random Forest) trained on the outputs of base models to combine them.
+		\item[HMM] Hidden Markov Model: a statistical model where the system is assumed to be a Markov process with unobserved (hidden) states.
+		\item[PCA] Principal Component Analysis: a dimensionality reduction technique that creates uncorrelated linear combinations of the original features explaining maximum variance.
+		\item[FFT] Fast Fourier Transform: an algorithm to compute the discrete Fourier transform, revealing periodic components in a signal.
+		\item[AUC] Area Under the Receiver Operating Characteristic Curve: a measure of a model's ability to distinguish between classes.
+		\item[API] Application Programming Interface: a set of protocols for building and interacting with software applications.
+		\item[KNN] K‑Nearest Neighbours: an algorithm that uses the $k$ closest data points to estimate missing values or make predictions.
+		\item[XGBoost] Extreme Gradient Boosting: an optimized gradient boosting library designed for speed and performance.
+		\item[LightGBM] Light Gradient Boosting Machine: a gradient boosting framework that uses tree‑based learning and is optimized for efficiency.
+		\item[RF] Random Forest: an ensemble learning method that constructs multiple decision trees and outputs their average prediction.
+		\item[LR] Logistic Regression: a linear model for binary classification that outputs probabilities using a logistic function.
+		\item[SVM] Support Vector Machine: a classifier that finds the hyperplane that best separates classes, with extensions for probability outputs.
+		\item[GBT] Gradient Boosting Trees: an ensemble technique that builds trees sequentially, each correcting errors of the previous one.
+		\item[ET] Extra Trees: an ensemble method similar to Random Forest but with random splits, often providing better variance reduction.
+		\item[MLP] Multi‑layer Perceptron: a class of feedforward artificial neural networks.
+	\end{description}
+	
+	\section{Important Functions and Their Roles}
+	\begin{itemize}
+		\item \texttt{ingest\_data()}: Orchestrates data fetching and missing value handling.
+		\item \texttt{engineer\_features\_expert()}: Creates all advanced features.
+		\item \texttt{apply\_hmm()}: Fits the Hidden Markov Model and adds regime probabilities.
+		\item \texttt{create\_target\_variable()}: Generates binary labels for a given horizon.
+		\item \texttt{train\_optimized\_ensemble()}: Executes the entire training pipeline (feature selection, SMOTE, tuning, calibration, meta‑learning).
+		\item \texttt{predict()}: Produces a forecast for the current conditions.
+		\item \texttt{assess\_trust()}: Computes trust score and reasons.
+		\item \texttt{save\_results()}: Saves predictions to '.csv' and '.xlsx' files.
+	\end{itemize}
+	
+	\section{Examples of Input/Output}
+	\subsection*{Input (at prediction time)}
+	\begin{lstlisting}
+		Latest weather: temperature=14.5\textdegree C, humidity=78%, pressure=834.6 hPa,
+		cloud_cover=96%, precipitation=0.0 mm, wind_speed=..., wind_direction=...
+	\end{lstlisting}
+	
+	\subsection*{Output (for 2‑hour forecast)}
+	\begin{lstlisting}
+		Individual Model Predictions:
+		RF: 5.7% (thresh=0.07) -> CLEAR
+		XGB: 3.9% (thresh=0.04) -> CLEAR
+		LGBM: 3.1% (thresh=0.08) -> CLEAR
+		LR: 2.8% (thresh=0.06) -> CLEAR
+		SVM: 1.8% (thresh=0.09) -> CLEAR
+		GBT: 5.9% (thresh=0.06) -> CLEAR
+		ET: 4.0% (thresh=0.10) -> CLEAR
+		MLP: 4.2% (thresh=0.05) -> CLEAR
+		
+		Stacked Ensemble:
+		Probability: 8.0%
+		80% CI: [5.5%, 10.5%]
+		Interval width: 5.0%
+		Ensemble threshold: 0.36
+		Final outcome: CLEAR SKIES
+		Confidence: VERY HIGH
+		Trust Level: HIGH
+	\end{lstlisting}
+	
+	\section{Conclusion}
+	The David Weather Predictor is a sophisticated system that combines domain‑inspired feature engineering, state‑of‑the‑art machine learning, and rigorous probabilistic methods to deliver accurate and trustworthy forecasts. Its modular design allows easy adaptation to other locations and time horizons.
+	
+\end{document}

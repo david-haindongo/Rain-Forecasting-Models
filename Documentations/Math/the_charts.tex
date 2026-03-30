@@ -1,0 +1,391 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{lmodern} % Latin Modern – works with pdfLaTeX
+
+% Ensure proper handling of any remaining Unicode characters
+\DeclareUnicodeCharacter{202F}{ } % replace narrow no‑break space with normal space
+
+\title{\textbf{David Rain Predictor Dashboard \\[0.5em] \large Charts Explained – v8.4}}
+\author{David H. Haindongo}
+\date{\today}
+
+\begin{document}
+	
+	\maketitle
+	\newpage
+	\tableofcontents
+	\newpage
+	
+	\section{Introduction}
+	The David Rain Predictor dashboard provides a comprehensive suite of scientific visualisations designed to reveal different aspects of atmospheric behaviour and model performance. This document explains each chart—what it shows, how to interpret it, and why it is important for rain prediction.
+	
+	All charts are interactive; they support panning, zooming, tooltips, and can be expanded to fullscreen. The dashboard also includes a time range selector that allows you to adjust the displayed historical window (1 day to 3 months).
+	
+	\section{Main Prediction Components}
+	
+	\subsection{Time Series Analysis}
+	\textbf{Chart ID:} \texttt{timeSeriesChart}
+	
+	\paragraph{What it shows:}
+	A multi‑axis line plot of the three primary weather variables over time:
+	\begin{itemize}
+		\item \textbf{Temperature} (°C) – left axis.
+		\item \textbf{Humidity} (\%) – right axis.
+		\item \textbf{Pressure} (hPa) – hidden axis (for reference).
+	\end{itemize}
+	
+	\paragraph{Why it’s important:}
+	This is the raw data visualised. Trends, cycles, and anomalies in these variables directly influence rain probability.
+	\begin{itemize}
+		\item \textbf{Temperature} affects evaporation and convective potential.
+		\item \textbf{Humidity} indicates moisture availability – a prerequisite for rain.
+		\item \textbf{Pressure} changes signal approaching weather systems (low pressure often brings rain).
+	\end{itemize}
+	By seeing how these move together, you can visually assess whether conditions are becoming favourable for precipitation.
+	
+	\subsection{Ensemble Prediction Panel}
+	\textbf{Location:} Right‑hand side of the first row.
+	
+	\paragraph{What it shows:}
+	A compact summary of the ensemble’s output:
+	\begin{itemize}
+		\item \textbf{Rain probability} (with 80\% conformal interval).
+		\item \textbf{Outcome} (RAIN / NO RAIN).
+		\item \textbf{Ensemble statistics}: conformal quantile, interval width, ensemble threshold, regime probabilities, volatility.
+		\item \textbf{Trust indicator} (HIGH / MODERATE / LOW).
+	\end{itemize}
+	
+	\paragraph{Why it’s important:}
+	This panel gives you the final answer at a glance, together with its uncertainty and reliability.
+	\begin{itemize}
+		\item The \textbf{conformal interval} tells you how much the probability could reasonably vary.
+		\item \textbf{Regime probabilities} show which atmospheric state (stable / transitional / turbulent) is currently dominant.
+		\item The \textbf{trust score} combines data quality, model agreement, and confidence – a high‑trust prediction is much more actionable.
+	\end{itemize}
+	
+	\section{Atmospheric State Analysis}
+	
+	\subsection{HMM Regime Detection}
+	\textbf{Chart ID:} \texttt{hmmChart}
+	
+	\paragraph{What it shows:}
+	Stacked area plot of the probabilities of three hidden Markov model (HMM) states over time:
+	\begin{itemize}
+		\item \textbf{State 0 (Stable)} – green.
+		\item \textbf{State 1 (Transitional)} – orange.
+		\item \textbf{State 2 (Turbulent)} – red.
+	\end{itemize}
+	
+	\paragraph{Why it’s important:}
+	The HMM learns the “hidden” weather regime from the data. Each state has a characteristic variability (e.g., turbulent = high volatility).
+	\begin{itemize}
+		\item \textbf{Stable} means low chance of sudden weather changes.
+		\item \textbf{Transitional} indicates a shift may be underway.
+		\item \textbf{Turbulent} signals high variability and often precedes rain.
+	\end{itemize}
+	Knowing the current regime helps you understand whether the atmosphere is “primed” for rain.
+	
+	\subsection{Complexity Analysis (FFT + Hurst)}
+	\textbf{Chart ID:} \texttt{complexityChart}
+	
+	\paragraph{What it shows:}
+	\begin{itemize}
+		\item A \textbf{power spectrum} (line plot) derived from a Fast Fourier Transform (FFT) of recent pressure data.
+		\item An annotated \textbf{Hurst exponent} value (red dashed line).
+	\end{itemize}
+	
+	\paragraph{Why it’s important:}
+	\begin{itemize}
+		\item The \textbf{power spectrum} reveals dominant cycles (e.g., daily, weekly) in pressure – important because weather systems often oscillate with characteristic periods.
+		\item The \textbf{Hurst exponent} measures long‑range dependence:
+		\begin{align*}
+			H < 0.5 &\rightarrow \text{mean‑reverting (returns quickly)}\\
+			H = 0.5 &\rightarrow \text{random (no memory)}\\
+			H > 0.5 &\rightarrow \text{trending (persistence)}
+		\end{align*}
+		This tells you whether the atmosphere tends to persist in its current state or revert – crucial for extending short‑term forecasts.
+	\end{itemize}
+	
+	\subsection{Atmospheric Volatility}
+	\textbf{Chart ID:} \texttt{volatilityChart}
+	
+	\paragraph{What it shows:}
+	A line plot of the \textbf{volatility index} (percentage) over time. This index is derived from the probability of being in the turbulent HMM state.
+	
+	\paragraph{Why it’s important:}
+	Volatility quantifies how quickly and strongly weather variables are changing. High volatility often precedes or accompanies rain events. By watching its evolution, you can anticipate periods of increased uncertainty and potential rainfall.
+	
+	\section{Rainfall Characteristics}
+	
+	\subsection{Daily Rainfall Distribution}
+	\textbf{Chart ID:} \texttt{rainfallDistributionChart}
+	
+	\paragraph{What it shows:}
+	A histogram of historical daily rainfall amounts, grouped into bins (e.g., 0–0.1 mm, 0.1–0.5 mm, …). Each bar shows the percentage of days that fell into that bin.
+	
+	\paragraph{Why it’s important:}
+	This gives you the climatological “baseline” of rain intensity.
+	\begin{itemize}
+		\item It tells you how common light vs. heavy rain is for your location.
+		\item It helps you judge whether a predicted rain event is extreme or typical.
+	\end{itemize}
+	
+	\subsection{Rain Accumulations}
+	\textbf{Chart ID:} \texttt{rainAccumulationChart}
+	
+	\paragraph{What it shows:}
+	Lines representing total rainfall accumulated over the last 6, 12, 24, and 48 hours.
+	
+	\paragraph{Why it’s important:}
+	Accumulations tell you how much rain has already fallen and over what period. This is critical for:
+	\begin{itemize}
+		\item Assessing flood risk (if soils are already saturated).
+		\item Understanding the persistence of rain events (long accumulations may indicate prolonged rainfall).
+		\item Verifying forecasts (did the model correctly predict the amount?).
+	\end{itemize}
+	
+	\section{Temporal Dynamics}
+	
+	\subsection{Rate of Change}
+	\textbf{Chart ID:} \texttt{rateOfChangeChart}
+	
+	\paragraph{What it shows:}
+	Line plots of the \textbf{first derivative} (rate of change) of temperature, humidity, and pressure. Essentially, how fast each variable is rising or falling per hour.
+	
+	\paragraph{Why it’s important:}
+	Rapid changes are often precursors to rain. For example:
+	\begin{itemize}
+		\item A sharp drop in pressure indicates an approaching low.
+		\item A sudden rise in humidity suggests moisture advection.
+	\end{itemize}
+	The rate of change can give early warning minutes to hours before rain actually starts.
+	
+	\subsection{Drawdowns}
+	\textbf{Chart ID:} \texttt{drawdownsChart}
+	
+	\paragraph{What it shows:}
+	A plot of the \textbf{drawdown} (percentage below a recent peak) for a chosen variable (often pressure). It highlights periods where the value falls significantly below its previous high.
+	
+	\paragraph{Why it’s important:}
+	In financial terms, drawdown measures decline from a peak. For pressure, large drawdowns often coincide with the passage of deep low‑pressure systems – which are closely linked to rain. It helps spot extreme events visually.
+	
+	\subsection{Interaction Terms}
+	\textbf{Chart ID:} \texttt{interactionTermsChart}
+	
+	\paragraph{What it shows:}
+	Products of two variables, such as:
+	\begin{itemize}
+		\item Temperature × Humidity
+		\item Pressure × Humidity
+		\item Temperature × Pressure
+	\end{itemize}
+	These are scaled to keep them in reasonable numeric ranges.
+	
+	\paragraph{Why it’s important:}
+	Weather is not linear – interactions often matter more than individual variables. For example:
+	\begin{itemize}
+		\item High temperature \textbf{and} high humidity together create high instability (convective potential).
+		\item Low pressure \textbf{and} high humidity signal a moist, unstable air mass.
+	\end{itemize}
+	The interaction terms capture these combined effects, which are powerful predictors for rain.
+	
+	\subsection{Rolling Statistics}
+	\textbf{Chart ID:} \texttt{rollingStatsChart}
+	
+	\paragraph{What it shows:}
+	Moving averages (means) over different windows: 6‑hour, 12‑hour, and 24‑hour (likely for temperature).
+	
+	\paragraph{Why it’s important:}
+	Rolling averages smooth out short‑term noise and reveal the underlying trend.
+	\begin{itemize}
+		\item The 6‑hour mean responds quickly to recent changes.
+		\item The 24‑hour mean gives a broader picture of the day’s conditions.
+	\end{itemize}
+	Comparing them helps you see whether a change is temporary or part of a sustained shift.
+	
+	\section{Advanced Statistical Views}
+	
+	\subsection{PCA Components}
+	\textbf{Chart ID:} \texttt{pcaComponentsChart}
+	
+	\paragraph{What it shows:}
+	The first three principal components (PC1, PC2, PC3) derived from a PCA of all weather variables. Below the chart, the explained variance percentages are displayed.
+	
+	\paragraph{Why it’s important:}
+	PCA reduces the many correlated weather variables into a few uncorrelated components that capture most of the variance.
+	\begin{itemize}
+		\item \textbf{PC1} often represents the overall “weather pattern” (e.g., warm/moist vs. cool/dry).
+		\item \textbf{PC2} might capture diurnal cycles or pressure systems.
+	\end{itemize}
+	By watching these components, you can see the dominant modes of variability at a glance.
+	
+	\subsection{Spectral Analysis (Dominant Frequency \& Energy)}
+	\textbf{Chart ID:} \texttt{spectralEnergyChart}
+	
+	\paragraph{What it shows:}
+	Two lines over time:
+	\begin{itemize}
+		\item \textbf{Dominant frequency} (cycles per day) – the strongest oscillation in recent pressure data.
+		\item \textbf{Spectral energy} – total power in the frequency spectrum.
+	\end{itemize}
+	
+	\paragraph{Why it’s important:}
+	\begin{itemize}
+		\item The dominant frequency tells you what timescale is currently most active (e.g., a 24‑hour cycle means diurnal heating is strong; longer cycles may indicate synoptic‑scale waves).
+		\item Spectral energy measures how “energetic” the atmosphere is – high energy often correlates with storminess.
+	\end{itemize}
+	This is a sophisticated way to monitor the changing character of weather patterns.
+	
+	\section{Correlation and Confusion Matrices}
+	
+	\subsection{Correlation Matrix}
+	\textbf{Chart ID:} \texttt{correlationMatrix}
+	
+	\paragraph{What it shows:}
+	A coloured grid of correlation coefficients between key weather variables (e.g., Temp, Humidity, Pressure, Precipitation, Wind). Red shades indicate positive correlation, blue shades negative.
+	
+	\paragraph{Why it’s important:}
+	Correlations reveal how variables move together historically.
+	\begin{itemize}
+		\item Strong positive correlation between humidity and precipitation confirms that wetter air leads to rain.
+		\item Negative correlation between temperature and pressure might indicate the passage of cold fronts.
+	\end{itemize}
+	Understanding these relationships helps you interpret why the model makes certain predictions.
+	
+	\subsection{Model Correlation Matrix}
+	\textbf{Chart ID:} \texttt{modelCorrelationMatrix}
+	
+	\paragraph{What it shows:}
+	A grid of correlations between the probability outputs of the eight base models (Random Forest, XGBoost, etc.). High values (green) mean models agree; low values (red) mean they disagree.
+	
+	\paragraph{Why it’s important:}
+	Diverse models that disagree can be combined to improve robustness. If all models are highly correlated, the ensemble may not add much value. This chart helps you see how much independent information each model brings.
+	
+	\subsection{Confusion Matrix}
+	\textbf{Chart ID:} \texttt{confusionMatrix}
+	
+	\paragraph{What it shows:}
+	A 2×2 grid with counts of:
+	\begin{itemize}
+		\item \textbf{True Negatives} (correctly predicted no rain)
+		\item \textbf{False Positives} (false alarm)
+		\item \textbf{False Negatives} (missed rain)
+		\item \textbf{True Positives} (correctly predicted rain)
+	\end{itemize}
+	Below it, derived metrics: accuracy, precision, recall, F1.
+	
+	\paragraph{Why it’s important:}
+	This is the ultimate performance summary of the ensemble on test data.
+	\begin{itemize}
+		\item High \textbf{recall} means the model rarely misses rain (important for safety).
+		\item High \textbf{precision} means when it says rain, it’s usually right (avoids false alarms).
+	\end{itemize}
+	The F2 score (weighted toward recall) is our primary optimisation target because missing rain is costlier than a false alarm.
+	
+	\section{Model Comparison and Validation}
+	
+	\subsection{Model Agreement}
+	\textbf{Chart ID:} \texttt{agreementChart}
+	
+	\paragraph{What it shows:}
+	A bar chart of the individual model probability estimates for the current prediction. Each bar’s height is the probability (0–100\%) from that model.
+	
+	\paragraph{Why it’s important:}
+	This gives you a quick visual of consensus (or lack thereof).
+	\begin{itemize}
+		\item If bars are clustered together, models agree → higher trust.
+		\item If bars are spread out, models disagree → lower trust.
+	\end{itemize}
+	It’s a direct window into the ensemble’s internal voting.
+	
+	\subsection{Multi‑Period Validation}
+	\textbf{Chart ID:} \texttt{validationChart}
+	
+	\paragraph{What it shows:}
+	For each model, three bars representing its F2 score on three consecutive validation periods (e.g., weeks 1, 2, 3). A red horizontal line marks the 0.5 threshold.
+	
+	\paragraph{Why it’s important:}
+	A model that performs well in one period may fail in another if the weather regime changes. This chart tests \textbf{stability across time}.
+	\begin{itemize}
+		\item Models that stay above the red line in all periods are considered stable and are kept in the ensemble.
+		\item Those that dip below are excluded – ensuring the ensemble works in all weather conditions.
+	\end{itemize}
+	
+	\subsection{Model Thresholds}
+	\textbf{Chart ID:} \texttt{thresholdChart}
+	
+	\paragraph{What it shows:}
+	A bar chart of the optimal probability thresholds (in \%) chosen for each base model. Bars are coloured:
+	\begin{itemize}
+		\item Green → low threshold (<30\%)
+		\item Blue → normal (30–40\%)
+		\item Red → high (>40\%)
+	\end{itemize}
+	
+	\paragraph{Why it’s important:}
+	Each model has its own bias. The threshold tells you how confident the model needs to be before it predicts rain.
+	\begin{itemize}
+		\item A low threshold means the model is “eager” to predict rain (high recall, lower precision).
+		\item A high threshold means it’s conservative (high precision, lower recall).
+	\end{itemize}
+	Knowing these helps you understand each model’s behaviour.
+	
+	\subsection{Model Table}
+	\textbf{HTML element:} \texttt{modelTable}
+	
+	\paragraph{What it shows:}
+	A tabular summary for each model:
+	\begin{itemize}
+		\item Probability estimate
+		\item Threshold
+		\item Outcome (RAIN / NO RAIN)
+		\item Period 1,2,3 F2 scores
+		\item Minimum F2 across periods
+		\item Status (Stable / Marginal / Excluded)
+	\end{itemize}
+	
+	\paragraph{Why it’s important:}
+	This table gives you the raw numbers behind the charts. It’s the most detailed view of each model’s performance and current prediction, allowing you to verify which models are driving the ensemble decision.
+	
+	\section{Additional Dashboard Elements}
+	
+	\subsection{HMM State Ribbon}
+	\textbf{Location:} Top of the dashboard, below the header.
+	
+	\paragraph{What it shows:}
+	The current dominant regime (State 0, 1, or 2), the Hurst exponent, and the volatility index – a quick status bar for the atmosphere.
+	
+	\paragraph{Why it’s important:}
+	It provides an at‑a‑glance summary of the atmospheric state without needing to interpret the full HMM chart.
+	
+	\subsection{Current Conditions}
+	\textbf{Location:} Below the configuration panel.
+	
+	\paragraph{What it shows:}
+	Real‑time (or latest) measurements: temperature, humidity, pressure, precipitation, cloud cover, wind speed.
+	
+	\paragraph{Why it’s important:}
+	These are the immediate observations that serve as input to the models. They provide context for the predictions (e.g., if it’s already raining, the forecast is partly confirmatory).
+	
+	\subsection{Time Range Selector}
+	\textbf{Location:} Below the timeframe selection.
+	
+	\paragraph{What it shows:}
+	Buttons to change the x‑axis range of most charts: 1 Day, 1 Week, 2 Weeks, 1 Month, 2 Months, 3 Months.
+	
+	\paragraph{Why it’s important:}
+	Allows you to zoom in on recent trends or zoom out to see longer‑term patterns, depending on your analysis needs.
+	
+	\section{Conclusion}
+	Every chart on the dashboard serves a distinct purpose, from raw data visualisation to advanced statistical summaries and model diagnostics. Together they provide a 360‑degree view of the atmosphere’s state, its historical behaviour, and the ensemble’s reasoning – enabling you to make informed decisions with a clear understanding of uncertainty and trust.
+	
+\end{document}

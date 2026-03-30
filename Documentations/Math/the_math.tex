@@ -1,0 +1,455 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+
+% listings setup
+\lstset{
+	language=Python,
+	basicstyle=\ttfamily\small,
+	keywordstyle=\color{blue},
+	commentstyle=\color{green!50!black},
+	stringstyle=\color{red},
+	numbers=left,
+	numberstyle=\tiny,
+	breaklines=true,
+	frame=single,
+	showstringspaces=false
+}
+
+\title{David Weather Predictor: Mathematical Notes with Explanations}
+\author{David H. Haindongo}
+\date{24 February 2026}
+
+\begin{document}
+	\maketitle
+	\newpage
+	These notes explain the mathematical steps used in the David Weather Predictor (v12.2). For each step, we give the purpose, the equation with variable definitions, a concrete numerical example, and the corresponding code.
+	
+	\section*{1. Missing Data Handling}
+	
+	\subsection*{Time Interpolation}
+	\textbf{What it does:} Fills missing values by linear interpolation between observed timestamps. Important to maintain temporal continuity without introducing bias.
+	
+	\textbf{Equation:}
+	\[
+	\hat{x}_t = x_{t_1} + \frac{x_{t_2}-x_{t_1}}{t_2-t_1}(t-t_1)
+	\]
+	where:
+	\begin{itemize}
+		\item $\hat{x}_t$ = estimated value at time $t$
+		\item $x_{t_1}$, $x_{t_2}$ = observed values at times $t_1$ and $t_2$ (nearest before/after $t$)
+		\item $t$ = time point with missing value
+	\end{itemize}
+	
+	\textbf{Example:} At 10:00, temperature = 20°C; at 12:00, temperature = 24°C. Estimate temperature at 11:00.
+	\[
+	\hat{x}_{11} = 20 + \frac{24-20}{12-10}(11-10) = 20 + 2 = 22°C
+	\]
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		df = df.interpolate(method='time', limit=24, limit_direction='both')
+	\end{lstlisting}
+	
+	\subsection*{KNN Imputation}
+	\textbf{What it does:} After interpolation, any remaining missing values are filled by averaging the $k$ most similar complete rows. This preserves multivariate relationships.
+	
+	\textbf{Equation:}
+	\[
+	\hat{x}^{(i)}_j = \frac{1}{k}\sum_{\ell \in \mathcal{N}_k(i)} x^{(\ell)}_j
+	\]
+	where:
+	\begin{itemize}
+		\item $\hat{x}^{(i)}_j$ = imputed value for feature $j$ in row $i$
+		\item $k$ = number of nearest neighbours (here $k=5$)
+		\item $\mathcal{N}_k(i)$ = set of $k$ rows closest to row $i$ (by Euclidean distance)
+		\item $x^{(\ell)}_j$ = observed value of feature $j$ in neighbour $\ell$
+	\end{itemize}
+	
+	\textbf{Example:} A row has missing humidity. Its five nearest neighbours (by Euclidean distance on other features) have humidities [78, 82, 76, 80, 79]. Then
+	\[
+	\hat{x}_{\text{humidity}} = \frac{78+82+76+80+79}{5} = 79\%
+	\]
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		imputer = KNNImputer(n_neighbors=5, weights='distance')
+		df_imputed = imputer.fit_transform(df_numeric)
+	\end{lstlisting}
+	
+	\section*{2. Feature Engineering}
+	
+	\subsection*{Lagged Variables}
+	\textbf{What it does:} Adds past values of key variables (pressure, temperature, etc.) as features. Captures temporal dependencies.
+	
+	\textbf{Equation:}
+	\[
+	v_{\text{lag }h}(t) = v(t-h)
+	\]
+	where:
+	\begin{itemize}
+		\item $v(t)$ = value of variable $v$ at time $t$
+		\item $h$ = lag in hours
+		\item $v_{\text{lag }h}(t)$ = feature added for prediction at time $t$
+	\end{itemize}
+	
+	\textbf{Example:} If temperature at 10:00 is 20°C, then $T_{\text{lag }3h}$ at 13:00 is 20°C.
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		features[f'{var}_lag_{lag}h'] = features[var].shift(lag)
+	\end{lstlisting}
+	
+	\subsection*{Rolling Statistics}
+	\textbf{What it does:} Computes local mean, volatility (std), min, max, skewness, and kurtosis over windows of various lengths. Summarises recent behaviour.
+	
+	\textbf{Equations:}
+	\[
+	\mu_w(t) = \frac{1}{w}\sum_{i=0}^{w-1} v(t-i),\quad
+	\sigma_w(t) = \sqrt{\frac{1}{w}\sum_{i=0}^{w-1} \bigl(v(t-i)-\mu_w(t)\bigr)^2}
+	\]
+	where:
+	\begin{itemize}
+		\item $w$ = window length in hours
+		\item $\mu_w(t)$ = rolling mean at time $t$
+		\item $\sigma_w(t)$ = rolling standard deviation
+		\item $v(t-i)$ = value $i$ hours before $t$
+	\end{itemize}
+	
+	\textbf{Example:} For a window of 6 hours, pressure values: [1013, 1015, 1014, 1013, 1012, 1010]. Then at the last point,
+	\[
+	\mu = \frac{1013+1015+1014+1013+1012+1010}{6} = 1012.83,\quad
+	\sigma = \sqrt{\frac{(1013-1012.83)^2+\cdots}{6}} \approx 1.72
+	\]
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		roll = features[var].rolling(window=w, min_periods=w//4)
+		features[f'{var}_mean_{w}h'] = roll.mean()
+		features[f'{var}_std_{w}h'] = roll.std()
+	\end{lstlisting}
+	
+	\subsection*{Rate of Change and Acceleration}
+	\textbf{What it does:} Measures how fast a variable is changing (first difference) and whether that change is accelerating (second difference). Useful for detecting fronts.
+	
+	\textbf{Equations:}
+	\[
+	\Delta_h v(t) = v(t)-v(t-h),\quad
+	\Delta_h^2 v(t) = v(t)-2v(t-h)+v(t-2h)
+	\]
+	where:
+	\begin{itemize}
+		\item $\Delta_h v(t)$ = change over last $h$ hours
+		\item $\Delta_h^2 v(t)$ = acceleration (change of the change)
+		\item $v(t)$ = value at time $t$
+	\end{itemize}
+	
+	\textbf{Example:} Pressure at t=0: 1013, t=6: 1015, t=12: 1010.
+	\[
+	\Delta_6 v(6) = 1015-1013 = 2,\quad
+	\Delta_6^2 v(12) = 1010 - 2\cdot1015 + 1013 = -7
+	\]
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		features[f'{var}_diff_{diff}h'] = features[var].diff(diff)
+		features[f'{var}_accel_6h'] = features[var].diff(6).diff(6)
+	\end{lstlisting}
+	
+	\subsection*{FFT Spectral Features}
+	\textbf{What it does:} Extracts dominant periodicities and overall energy from pressure/humidity over a week. Captures large‑scale weather patterns (e.g., synoptic cycles).
+	
+	\textbf{Equations:}
+	\[
+	X_k = \sum_{n=0}^{N-1} x_n e^{-2\pi i k n/N},\quad
+	E = \sum_{k=0}^{N-1} |X_k|^2
+	\]
+	where:
+	\begin{itemize}
+		\item $N$ = window length (168 hours)
+		\item $x_n$ = detrended time series values
+		\item $X_k$ = complex Fourier coefficient at frequency $k/N$
+		\item $E$ = total spectral energy
+		\item Dominant frequencies = $k/N$ for the $k$ with largest $|X_k|$
+	\end{itemize}
+	
+	\textbf{Example:} For a segment of pressure [1010,1012,1011,1013] (N=4), after detrending, compute FFT; suppose top frequency = 0.25 cycles/hour, energy = 450.
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		def spectral_features(series, window=168, n_freqs=5):
+		seg = series[-window:]
+		fft_vals = np.abs(fft(seg))[:window//2]
+		freqs = fftfreq(window, d=1.0)[:window//2]
+		top_idx = np.argsort(fft_vals)[-n_freqs:][::-1]
+		top_freqs = freqs[top_idx]
+		energy = np.sum(fft_vals**2)
+		return list(top_freqs) + [energy]
+	\end{lstlisting}
+	
+	\subsection*{PCA}
+	\textbf{What it does:} Reduces dimensionality by creating linear combinations of all numeric features that explain most variance. Adds the first five principal components as new features.
+	
+	\textbf{Equations:}
+	\[
+	\mathbf{C} = \frac{1}{m-1}\mathbf{X}^T\mathbf{X} = \mathbf{V}\mathbf{\Lambda}\mathbf{V}^T,\quad
+	\mathbf{X}\mathbf{V}_5
+	\]
+	where:
+	\begin{itemize}
+		\item $\mathbf{X}$ = centered data matrix ($m$ rows, $p$ columns)
+		\item $\mathbf{C}$ = covariance matrix
+		\item $\mathbf{V}$ = matrix of eigenvectors
+		\item $\mathbf{\Lambda}$ = diagonal matrix of eigenvalues
+		\item $\mathbf{V}_5$ = first 5 eigenvectors
+		\item $\mathbf{X}\mathbf{V}_5$ = first 5 principal components
+	\end{itemize}
+	
+	\textbf{Example:} From 100 features, first principal component for a sample might be 3.2 (unitless).
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		pca = PCA(n_components=5)
+		pca_features = pca.fit_transform(X_pca)
+		for i in range(5): features[f'pca_{i+1}'] = pca_features[:,i]
+	\end{lstlisting}
+	
+	\section*{3. HMM Regime Detection}
+	\textbf{What it does:} Identifies three hidden weather regimes (e.g., stable, transition, stormy) based on pressure, temperature, humidity. The posterior probabilities are used as features, informing the model about the current atmospheric state.
+	
+	\textbf{Equations:}
+	\[
+	P(\mathbf{o}_t|S_t=i)=\mathcal{N}(\mathbf{o}_t;\boldsymbol{\mu}_i,\boldsymbol{\Sigma}_i),\quad
+	\gamma_t(i)=P(S_t=i|\mathbf{o}_{1:t})
+	\]
+	where:
+	\begin{itemize}
+		\item $\mathbf{o}_t$ = observation vector (pressure, temperature, humidity) at time $t$
+		\item $S_t$ = hidden state (0,1,2)
+		\item $\boldsymbol{\mu}_i$, $\boldsymbol{\Sigma}_i$ = mean and covariance of observations in state $i$
+		\item $\gamma_t(i)$ = posterior probability of being in state $i$ given all data up to $t$
+	\end{itemize}
+	
+	\textbf{Example:} For the latest hour, model outputs $\gamma_t = [0.98, 0.02, 0.00]$, meaning 98\% probability of regime 0.
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		model = hmm.GaussianHMM(n_components=3, covariance_type="diag")
+		model.fit(data_scaled)
+		state_probs = model.predict_proba(data_scaled)
+		for i in range(3): df[f'regime_{i}'] = state_probs[:,i]
+	\end{lstlisting}
+	
+	\section*{4. Target Variable}
+	\textbf{What it does:} Creates the binary label: 1 if total precipitation over the next $H$ hours exceeds 0.2 mm, otherwise 0. This defines what we are predicting.
+	
+	\textbf{Equation:}
+	\[
+	y_t = \mathbf{1}\left(\sum_{i=1}^{H} \text{precip}_{t+i} > 0.2\right)
+	\]
+	where:
+	\begin{itemize}
+		\item $y_t$ = target for time $t$ (1 = rain, 0 = no rain)
+		\item $H$ = forecast horizon (hours)
+		\item $\text{precip}_{t+i}$ = precipitation at future hour $t+i$
+		\item $0.2$ mm = threshold for a “rain event”
+	\end{itemize}
+	
+	\textbf{Example:} For 4‑hour forecast, if precipitation in next 4 hours sums to 0.5 mm, then $y_t=1$ (rain).
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		future_rain = df['precipitation'].rolling(window=H, min_periods=1).sum().shift(-H)
+		df[target_col] = (future_rain > 0.2).astype(int)
+	\end{lstlisting}
+	
+	\section*{5. SMOTE for Imbalance}
+	\textbf{What it does:} Generates synthetic minority (rain) samples by interpolating between existing ones. Balances the classes so models don't just predict “no rain”.
+	
+	\textbf{Equation:}
+	\[
+	\mathbf{x}_{\text{new}} = \mathbf{x}_i + \lambda(\mathbf{x}_j-\mathbf{x}_i),\quad \lambda\in[0,1]
+	\]
+	where:
+	\begin{itemize}
+		\item $\mathbf{x}_i$ = a minority class sample
+		\item $\mathbf{x}_j$ = one of its $k$ nearest neighbours (also minority)
+		\item $\lambda$ = random number in $[0,1]$
+		\item $\mathbf{x}_{\text{new}}$ = synthetic sample
+	\end{itemize}
+	
+	\textbf{Example:} $\mathbf{x}_i=[20,85,1010]$, $\mathbf{x}_j=[22,80,1008]$, $\lambda=0.3$ gives
+	\[
+	\mathbf{x}_{\text{new}} = [20+0.3(2),\;85+0.3(-5),\;1010+0.3(-2)] = [20.6,83.5,1009.4]
+	\]
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		smote = SMOTE(random_state=42)
+		X_train_res, y_train_res = smote.fit_resample(X_train_scaled, y_train)
+	\end{lstlisting}
+	
+	\section*{6. Hyperparameter Tuning}
+	\textbf{What it does:} Searches for the best hyperparameters of each base model using the F2 score (which weights recall twice as much as precision). This is important because missing a rain event (false negative) is worse than a false alarm in many applications.
+	
+	\textbf{Equation:}
+	\[
+	F_2 = 5\frac{P\cdot R}{4P + R}
+	\]
+	where:
+	\begin{itemize}
+		\item $P$ = precision = $\frac{TP}{TP+FP}$
+		\item $R$ = recall = $\frac{TP}{TP+FN}$
+		\item $TP, FP, FN$ = true positives, false positives, false negatives
+	\end{itemize}
+	
+	\textbf{Example:} If precision=0.8, recall=0.5, then $F_2 = 5\cdot\frac{0.4}{4\cdot0.8+0.5}= \frac{2}{3.7}\approx 0.54$.
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		def f2_score_func(y_true, y_pred):
+		return fbeta_score(y_true, y_pred, beta=2, zero_division=0)
+		f2_scorer = make_scorer(f2_score_func)
+	\end{lstlisting}
+	\begin{lstlisting}
+		rf_search = RandomizedSearchCV(rf, rf_params, n_iter=10, cv=tscv,
+		scoring=f2_scorer, random_state=42)
+		rf_search.fit(X_train_res, y_train_res)
+	\end{lstlisting}
+	
+	\section*{7. Platt Scaling (Calibration)}
+	\textbf{What it does:} Transforms raw model probabilities into well‑calibrated ones by fitting a logistic regression on a validation set. This ensures that a 70\% probability actually means rain 70\% of the time.
+	
+	\textbf{Equation:}
+	\[
+	p_{\text{cal}} = \frac{1}{1+e^{-(a\,p_{\text{raw}}+b)}}
+	\]
+	where:
+	\begin{itemize}
+		\item $p_{\text{raw}}$ = raw probability from a base model
+		\item $a, b$ = parameters learned by logistic regression on validation set
+		\item $p_{\text{cal}}$ = calibrated probability
+	\end{itemize}
+	
+	\textbf{Example:} Raw probability 0.3, learned $a=2.0$, $b=-1.0$:
+	\[
+	p_{\text{cal}} = \frac{1}{1+e^{-(2\cdot0.3-1.0)}} = \frac{1}{1+e^{0.4}} \approx 0.40
+	\]
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		calibrator = LogisticRegression(C=1e6, solver='lbfgs')
+		calibrator.fit(raw_val.reshape(-1,1), y_val)
+		cal_val = calibrator.predict_proba(raw_val.reshape(-1,1))[:,1]
+	\end{lstlisting}
+	
+	\section*{8. Stacked Ensemble}
+	\textbf{What it does:} Combines all calibrated base models by training a Random Forest on their outputs. This meta‑learner learns which models to trust in different situations, improving overall performance.
+	
+	\textbf{Equations:}
+	\[
+	\mathbf{f}(t) = [\hat{p}_1(t),\dots,\hat{p}_8(t)],\quad
+	p_{\text{ens}}(t) = \frac{1}{B}\sum_{b=1}^{B} T_b(\mathbf{f}(t))
+	\]
+	where:
+	\begin{itemize}
+		\item $\hat{p}_m(t)$ = calibrated probability from model $m$ at time $t$
+		\item $\mathbf{f}(t)$ = meta‑feature vector
+		\item $B$ = number of trees in the Random Forest
+		\item $T_b$ = prediction of the $b$-th decision tree
+		\item $p_{\text{ens}}(t)$ = final ensemble probability
+	\end{itemize}
+	
+	\textbf{Example:} For a new sample, meta‑features = [0.06, 0.04, 0.03, 0.03, 0.02, 0.06, 0.04, 0.04]; Random Forest outputs 0.08.
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		X_meta_val = np.column_stack([val_probas[name] for name in calibrated_models])
+		meta_rf = RandomForestClassifier(n_estimators=200, max_depth=10)
+		meta_rf.fit(X_meta_val, y_val)
+	\end{lstlisting}
+	
+	\section*{9. Threshold Optimisation}
+	\textbf{What it does:} Finds the decision threshold (on the ensemble probability) that maximises the F2 score on the validation set. This threshold is used to convert probabilities into final “rain”/“no rain” predictions.
+	
+	\textbf{Equation:}
+	\[
+	t^* = \arg\max_{t\in[0.01,0.99]} F_2\bigl(y,\; \mathbf{1}(p\ge t)\bigr)
+	\]
+	where:
+	\begin{itemize}
+		\item $t$ = threshold value
+		\item $p$ = ensemble probability
+		\item $\mathbf{1}(p\ge t)$ = binary prediction (1 if $p\ge t$, else 0)
+		\item $y$ = true label
+		\item $F_2$ = F2 score computed on validation set
+	\end{itemize}
+	
+	\textbf{Example:} On validation set, threshold 0.36 gives $F_2=0.70$, 0.37 gives 0.69, so optimal = 0.36.
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		thresholds = np.linspace(0.01,0.99,99)
+		f2_scores = [fbeta_score(y_val, (val_proba>=t).astype(int), beta=2)
+		for t in thresholds]
+		best_thresh = thresholds[np.argmax(f2_scores)]
+	\end{lstlisting}
+	
+	\section*{10. Conformal Prediction}
+	\textbf{What it does:} Constructs an 80\% prediction interval around the ensemble probability, giving an uncertainty estimate. This is crucial for risk‑aware decision making.
+	
+	\textbf{Equations:}
+	\[
+	q = Q_{0.8}\bigl(|p_{\text{ens}}(i)-y_i|\bigr),\quad
+	\text{interval} = [\max(0,\,p_{\text{ens}}-q),\;\min(1,\,p_{\text{ens}}+q)]
+	\]
+	where:
+	\begin{itemize}
+		\item $p_{\text{ens}}(i)$ = ensemble probability for validation sample $i$
+		\item $y_i$ = true label for validation sample $i$
+		\item $q$ = 80th percentile of absolute errors on validation set
+		\item $p_{\text{ens}}$ = ensemble probability for a new prediction
+		\item Interval is clipped to $[0,1]$
+	\end{itemize}
+	
+	\textbf{Example:} Absolute errors on validation set: [0.02, 0.05, 0.01, 0.07, ...]; 80th percentile $q=0.025$. For new prediction $p_{\text{ens}}=0.08$, interval = [0.055, 0.105].
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		errors = np.abs(val_ensemble_proba - y_val)
+		q = np.quantile(errors, 0.8)
+		lower = max(0, ensemble_proba - q)
+		upper = min(1, ensemble_proba + q)
+	\end{lstlisting}
+	
+	\section*{11. Trust Assessment}
+	\textbf{What it does:} Computes a trust score based on data quality, interval width, model agreement, confidence level, low probability bonus, and volatility. This helps users gauge how much to rely on the forecast.
+	
+	\textbf{Equation:}
+	\[
+	\text{score} = w_1 Q + w_2 I + w_3 A + w_4 C + w_5 B - w_6 V
+	\]
+	where:
+	\begin{itemize}
+		\item $Q$ = data quality factor (0–3)
+		\item $I$ = interval width factor (0–2)
+		\item $A$ = model agreement factor (0–2)
+		\item $C$ = confidence label factor (0–1)
+		\item $B$ = low probability bonus (0–1)
+		\item $V$ = volatility penalty (0–1)
+		\item $w_i$ = heuristic weights (usually 1 except where specified)
+	\end{itemize}
+	Trust level is then assigned based on percentage of maximum possible score.
+	
+	\textbf{Example:} Data quality=100\% (weight 3), interval width=5\% (weight 2), model agreement range=4.1\% (weight 2), confidence=VERY HIGH (weight 1), low probability bonus (weight 1), no volatility penalty → total=3+2+2+1+1=9, max possible=9 → trust=100\% (HIGH).
+	
+	\textbf{Code:}
+	\begin{lstlisting}
+		trust_status, trust_reasons = self.assess_trust(...)
+	\end{lstlisting}
+	
+\end{document}
